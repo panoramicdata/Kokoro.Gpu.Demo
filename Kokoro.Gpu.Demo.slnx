@@ -4,6 +4,7 @@
     <File Path=".gitignore" />
     <File Path="LICENSE.txt" />
     <File Path="README.md" />
+    <File Path="version.json" />
   </Folder>
   <Project Path="Kokoro.Gpu.Demo/Kokoro.Gpu.Demo.csproj" />
 </Solution>
