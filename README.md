@@ -23,7 +23,14 @@ A powerful, self-contained demonstration of the **Kokoro Text-to-Speech (TTS)** 
 ### Installation
 
 1. Clone or download this repository
-2. Build the project:dotnet build3. Run the demo:dotnet run## 📖 Usage Guide
+2. Build the project:dotnet build
+3. Run the demo:
+
+``` bash
+dotnet run
+```
+
+## 📖 Usage Guide
 
 ### Interactive Mode (Default)
 
