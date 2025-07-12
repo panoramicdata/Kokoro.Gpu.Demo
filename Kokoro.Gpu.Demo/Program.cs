@@ -1,30 +1,155 @@
-﻿using KokoroSharp;
+﻿using System.CommandLine;
+using System.CommandLine.Parsing;
+using KokoroSharp;
 
 namespace Kokoro.Gpu.Demo;
 
 public class Program
 {
-	public static async Task Main()
+	private static bool _saveToWav = false;
+	private static readonly string _outputDirectory = "output";
+
+	public static async Task<int> Main(string[] args)
 	{
-		try
+		var textOption = new Option<string?>(
+			["--text", "-t"],
+			"Text to synthesize to speech");
+
+		var voiceOption = new Option<string?>(
+			["--voice", "-v"],
+			"Voice to use for synthesis (use --list-voices to see available voices)");
+
+		var outputOption = new Option<string?>(
+			["--output", "-o"],
+			"Output WAV file path (if not specified, audio will be played directly)");
+
+		var listVoicesOption = new Option<bool>(
+			["--list-voices", "-l"],
+			"List all available voices and exit");
+
+		var interactiveOption = new Option<bool>(
+			["--interactive", "-i"],
+			"Start in interactive mode (default if no other options specified)");
+
+		var rootCommand = new RootCommand("Kokoro GPU TTS Demo - High-quality neural text-to-speech synthesis")
 		{
-			await RunTtsDemoAsync();
+			textOption,
+			voiceOption,
+			outputOption,
+			listVoicesOption,
+			interactiveOption
+		};
+
+		rootCommand.SetHandler(async (text, voice, output, listVoices, interactive) =>
+		{
+			try
+			{
+				if (listVoices)
+				{
+					ListVoices();
+					return;
+				}
+
+				// Load the TTS model
+				Console.WriteLine("Loading Kokoro TTS model...");
+				var tts = await LoadModelWithRetryAsync();
+				Console.WriteLine("Model loaded successfully!");
+
+				if (!string.IsNullOrEmpty(text))
+				{
+					// Command-line mode
+					await ProcessCommandLineAsync(tts, text, voice, output);
+				}
+				else
+				{
+					// Interactive mode (default)
+					await RunInteractiveModeAsync(tts);
+				}
+			}
+			catch (Exception ex)
+			{
+				Console.WriteLine($"An error occurred: {ex.Message}");
+				Environment.Exit(1);
+			}
+		}, textOption, voiceOption, outputOption, listVoicesOption, interactiveOption);
+
+		return await rootCommand.InvokeAsync(args);
+	}
+
+	private static void ListVoices()
+	{
+		Console.WriteLine("Available voices:");
+		Console.WriteLine();
+
+		var voices = KokoroVoiceManager.Voices.ToList();
+		if (voices.Count == 0)
+		{
+			Console.WriteLine("No voices available.");
+			return;
 		}
-		catch (Exception ex)
+
+		foreach (var voice in voices.OrderBy(v => v.Language).ThenBy(v => v.Name))
 		{
-			Console.WriteLine($"An error occurred: {ex.Message}");
-			Console.WriteLine("Press any key to exit...");
-			Console.ReadKey();
+			Console.WriteLine($"  {voice.Name,-20} ({voice.Language})");
+		}
+
+		Console.WriteLine();
+		Console.WriteLine($"Total: {voices.Count} voices");
+	}
+
+	private static async Task ProcessCommandLineAsync(KokoroTTS tts, string text, string? voiceName, string? outputPath)
+	{
+		// Get the voice
+		dynamic? voice;
+		if (!string.IsNullOrEmpty(voiceName))
+		{
+			voice = KokoroVoiceManager.GetVoice(voiceName);
+			if (voice == null)
+			{
+				Console.WriteLine($"❌ Voice '{voiceName}' not found.");
+				Console.WriteLine("Use --list-voices to see available voices.");
+				Environment.Exit(1);
+				return;
+			}
+		}
+		else
+		{
+			voice = GetDefaultVoice();
+			if (voice == null)
+			{
+				Console.WriteLine("❌ No voices available.");
+				Environment.Exit(1);
+				return;
+			}
+		}
+
+		Console.WriteLine($"Using voice: {voice.Name} ({voice.Language})");
+		Console.WriteLine($"Synthesizing: \"{text}\"");
+
+		if (!string.IsNullOrEmpty(outputPath))
+		{
+			// Save to WAV file - For now, we'll show a message about the limitation
+			Console.WriteLine("⚠️  WAV file output is not yet implemented in this demo.");
+			Console.WriteLine("    The KokoroSharp.GPU library currently supports direct audio playback only.");
+			Console.WriteLine("    Playing audio directly instead...");
+			await SpeakTextAsync(tts, text, voice);
+			// Add a small delay to ensure audio playback completes before the application exits
+			await Task.Delay(1000); // Wait for 1 second
+			Console.WriteLine("✅ Audio playback completed.");
+		}
+		else
+		{
+			// Play directly
+			await SpeakTextAsync(tts, text, voice);
+			// Add a small delay to ensure audio playback completes before the application exits
+			await Task.Delay(1000); // Wait for 1 second
+			Console.WriteLine("✅ Audio playback completed.");
 		}
 	}
 
-	private static async Task RunTtsDemoAsync()
+	private static async Task RunInteractiveModeAsync(KokoroTTS tts)
 	{
-		Console.WriteLine("Welcome to Kokoro TTS Demo!");
-		Console.WriteLine("Loading model...");
-
-		var tts = await LoadModelWithRetryAsync();
-		Console.WriteLine("Model loaded successfully!");
+		Console.WriteLine("Welcome to Kokoro TTS Interactive Mode!");
 
 		var currentVoice = GetDefaultVoice();
 		if (currentVoice == null)
@@ -35,6 +160,7 @@ public class Program
 
 		Console.WriteLine($"Using voice: {currentVoice.Name} ({currentVoice.Language})");
 		Console.WriteLine("Type 'help' for available commands or just start typing to speak text.");
+		Console.WriteLine();
 
 		await ProcessUserInputAsync(tts, currentVoice);
 	}
@@ -121,17 +247,21 @@ public class Program
 
 	private static void ShowHelp()
 	{
-		Console.WriteLine("\nCommands:");
+		Console.WriteLine("\nInteractive Mode Commands:");
 		Console.WriteLine("  • Type text to speak it");
 		Console.WriteLine("  • 'voice <name>' - Change voice (exact name required, Tab for completion)");
 		Console.WriteLine("  • 'voices' - List all available voices");
 		Console.WriteLine("  • 'voices <prefix>' - List voices starting with prefix (e.g., 'voices bf_')");
 		Console.WriteLine("  • 'search <term>' - Search for voices by name or language");
+		Console.WriteLine("  • 'wav on' - Enable WAV file output (currently shows notification only)");
+		Console.WriteLine("  • 'wav off' - Disable WAV file output");
+		Console.WriteLine("  • 'wav status' - Show current WAV output status");
 		Console.WriteLine("  • 'help' - Show this help");
 		Console.WriteLine("  • 'exit' or 'quit' - Exit the program");
 
 		Console.WriteLine();
 		Console.WriteLine("💡 Tip: Use Tab after 'voice ' to auto-complete voice names!");
+		Console.WriteLine("💡 Note: WAV output is planned for a future version");
 
 		Console.WriteLine();
 	}
@@ -142,17 +272,26 @@ public class Program
 
 		while (true)
 		{
-			Console.Write("> ");
+			Console.Write($"{(_saveToWav ? "📁" : "🔊")} > ");
 			var input = ReadLineWithTabCompletion()?.Trim();
 
 			if (string.IsNullOrEmpty(input))
+			{
 				continue;
+			}
 
 			// Handle exit commands
 			if (IsExitCommand(input))
 			{
 				Console.WriteLine("Goodbye!");
 				break;
+			}
+
+			// Handle WAV output commands
+			if (input.StartsWith("wav ", StringComparison.OrdinalIgnoreCase))
+			{
+				HandleWavCommand(input);
+				continue;
 			}
 
 			// Handle voice change command
@@ -192,8 +331,42 @@ public class Program
 				continue;
 			}
 
-			// Speak the text
+			// Process the text (speak or save to WAV)
+			if (_saveToWav)
+			{
+				Console.WriteLine("⚠️  WAV output mode is enabled but file saving is not yet implemented.");
+				Console.WriteLine("    Playing audio directly instead...");
+			}
+
 			await SpeakTextAsync(tts, input, currentVoice);
+		}
+	}
+
+	private static void HandleWavCommand(string input)
+	{
+		var command = input[4..].Trim().ToLowerInvariant();
+
+		switch (command)
+		{
+			case "on":
+				_saveToWav = true;
+				Console.WriteLine("💡 WAV output mode enabled (visual indicator only).");
+				Console.WriteLine("    Note: File saving functionality will be added in a future version.");
+				break;
+
+			case "off":
+				_saveToWav = false;
+				Console.WriteLine("✅ WAV output disabled. Audio will be played directly.");
+				break;
+
+			case "status":
+				Console.WriteLine($"WAV output mode: {(_saveToWav ? "ON (indicator only)" : "OFF")}");
+				Console.WriteLine("Note: Actual file saving is not yet implemented.");
+				break;
+
+			default:
+				Console.WriteLine("❌ Invalid WAV command. Use 'wav on', 'wav off', or 'wav status'.");
+				break;
 		}
 	}
 
@@ -270,18 +443,27 @@ public class Program
 	private static int LevenshteinDistance(string source, string target)
 	{
 		if (string.IsNullOrEmpty(source))
+		{
 			return string.IsNullOrEmpty(target) ? 0 : target.Length;
+		}
 
 		if (string.IsNullOrEmpty(target))
+		{
 			return source.Length;
+		}
 
 		var matrix = new int[source.Length + 1, target.Length + 1];
 
 		// Initialize first row and column
 		for (int i = 0; i <= source.Length; i++)
+		{
 			matrix[i, 0] = i;
+		}
+
 		for (int j = 0; j <= target.Length; j++)
+		{
 			matrix[0, j] = j;
+		}
 
 		// Fill the matrix
 		for (int i = 1; i <= source.Length; i++)
@@ -466,7 +648,9 @@ public class Program
 				default:
 					// Regular character input
 					if (char.IsControl(keyInfo.KeyChar))
+					{
 						break;
+					}
 
 					input.Add(keyInfo.KeyChar);
 					Console.Write(keyInfo.KeyChar);
