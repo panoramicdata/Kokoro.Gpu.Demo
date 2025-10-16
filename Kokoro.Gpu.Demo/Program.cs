@@ -7,7 +7,6 @@ namespace Kokoro.Gpu.Demo;
 public class Program
 {
 	private static bool _saveToWav = false;
-	private static readonly string _outputDirectory = "output";
 
 	public static async Task<int> Main(string[] args)
 	{
